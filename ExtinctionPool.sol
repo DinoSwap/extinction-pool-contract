@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 
+
 /******************************************/
 /*       IERC20 starts here               */
 /******************************************/
@@ -81,6 +82,7 @@ interface IERC20 {
      */
     event Approval(address indexed owner, address indexed spender, uint256 value);
 }
+
 
 /******************************************/
 /*       SafeMath starts here             */
@@ -246,6 +248,7 @@ library SafeMath {
     }
 }
 
+
 /******************************************/
 /*       Address starts here              */
 /******************************************/
@@ -392,6 +395,7 @@ library Address {
     }
 }
 
+
 /******************************************/
 /*       SafeERC20 starts here            */
 /******************************************/
@@ -469,15 +473,116 @@ library SafeERC20 {
 }
 
 /******************************************/
+/*       Context starts here              */
+/******************************************/
+
+// File: @openzeppelin/contracts/GSN/Context.sol
+
+pragma solidity ^0.6.0;
+
+/*
+ * @dev Provides information about the current execution context, including the
+ * sender of the transaction and its data. While these are generally available
+ * via msg.sender and msg.data, they should not be accessed in such a direct
+ * manner, since when dealing with GSN meta-transactions the account sending and
+ * paying for execution may not be the actual sender (as far as an application
+ * is concerned).
+ *
+ * This contract is only required for intermediate, library-like contracts.
+ */
+abstract contract Context {
+    function _msgSender() internal view virtual returns (address payable) {
+        return msg.sender;
+    }
+
+    function _msgData() internal view virtual returns (bytes memory) {
+        this; // silence state mutability warning without generating bytecode - see https://github.com/ethereum/solidity/issues/2691
+        return msg.data;
+    }
+}
+
+/******************************************/
+/*       Ownable starts here              */
+/******************************************/
+
+// File: @openzeppelin/contracts/access/Ownable.sol
+
+pragma solidity ^0.6.0;
+
+/**
+ * @dev Contract module which provides a basic access control mechanism, where
+ * there is an account (an owner) that can be granted exclusive access to
+ * specific functions.
+ *
+ * By default, the owner account will be the one that deploys the contract. This
+ * can later be changed with {transferOwnership}.
+ *
+ * This module is used through inheritance. It will make available the modifier
+ * `onlyOwner`, which can be applied to your functions to restrict their use to
+ * the owner.
+ */
+contract Ownable is Context {
+    address private _owner;
+
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+
+    /**
+     * @dev Initializes the contract setting the deployer as the initial owner.
+     */
+    constructor () internal {
+        address msgSender = _msgSender();
+        _owner = msgSender;
+        emit OwnershipTransferred(address(0), msgSender);
+    }
+
+    /**
+     * @dev Returns the address of the current owner.
+     */
+    function owner() public view returns (address) {
+        return _owner;
+    }
+
+    /**
+     * @dev Throws if called by any account other than the owner.
+     */
+    modifier onlyOwner() {
+        require(_owner == _msgSender(), "Ownable: caller is not the owner");
+        _;
+    }
+
+    /**
+     * @dev Leaves the contract without owner. It will not be possible to call
+     * `onlyOwner` functions anymore. Can only be called by the current owner.
+     *
+     * NOTE: Renouncing ownership will leave the contract without an owner,
+     * thereby removing any functionality that is only available to the owner.
+     */
+    function renounceOwnership() public virtual onlyOwner {
+        emit OwnershipTransferred(_owner, address(0));
+        _owner = address(0);
+    }
+
+    /**
+     * @dev Transfers ownership of the contract to a new account (`newOwner`).
+     * Can only be called by the current owner.
+     */
+    function transferOwnership(address newOwner) public virtual onlyOwner {
+        require(newOwner != address(0), "Ownable: new owner is the zero address");
+        emit OwnershipTransferred(_owner, newOwner);
+        _owner = newOwner;
+    }
+}
+
+/******************************************/
 /*        ExtinctionPool starts here       */
 /******************************************/
 
 pragma solidity 0.6.12;
 
-contract ExtinctionPool {
+contract ExtinctionPool is Ownable {
     using SafeMath for uint256;
     using SafeERC20 for IERC20;
-    address constant burnAddress = 0x0000000000000000000000000000000000000001;
+    address constant burnAddress = 0x000000000000000000000000000000000000dEaD;
 
     struct UserInfo 
     {
@@ -497,15 +602,18 @@ contract ExtinctionPool {
     uint256 public immutable startBlock;              // The block number at which reward distribution starts.
     uint256 public immutable endBlock;                // The block number at which reward distribution ends.
     uint256 public immutable lockBlock;               // The block number at which deposit period ends.
+    uint256 public stakedDinos;
     PoolInfo public poolInfo;
+    bool public emergencyActive;
 
     mapping (address => UserInfo) public userInfo;     // Info of each user that stakes DINO tokens.
 
     event Withdraw(address indexed user, uint256 amount);
     event Deposit(address indexed user, uint256 amount);
     event Burn(uint256 amount);
+    event EmergencyWithdraw(address indexed user, uint256 amount);
 
-    constructor(IERC20 _DINO, IERC20 _REWARD, uint256 _rewardPerBlock, uint256 _startBlock, uint256 _endBlock, uint256 _lockBlock) public {
+    constructor(IERC20 _DINO, IERC20 _REWARD, uint256 _rewardPerBlock, uint256 _startBlock, uint256 _lockBlock, uint256 _endBlock) public {
         require(address(_DINO) != address(0), "_DINO address not set!");
         require(address(_REWARD) != address(0), "_REWARD address not set!");
         require(_rewardPerBlock != 0, "_rewardPerBlock not set!");
@@ -549,11 +657,10 @@ contract ExtinctionPool {
     function pendingReward(address _user) external view returns (uint256) {
         UserInfo storage user = userInfo[_user];
         uint256 accRewardPerShare = poolInfo.accRewardPerShare;
-        uint256 dinoSupply = DINO.balanceOf(address(this));
-        if (block.number > poolInfo.lastRewardBlock && dinoSupply != 0) {
+        if (block.number > poolInfo.lastRewardBlock && stakedDinos != 0) {
             uint256 multiplier = getMultiplier(poolInfo.lastRewardBlock, block.number);
             uint256 tokenReward = multiplier.mul(rewardPerBlock);
-            accRewardPerShare = accRewardPerShare.add(tokenReward.mul(1e12).div(dinoSupply));
+            accRewardPerShare = accRewardPerShare.add(tokenReward.mul(1e12).div(stakedDinos));
         }
         return user.amount.mul(accRewardPerShare).div(1e12).sub(user.rewardDebt);
     }
@@ -565,22 +672,22 @@ contract ExtinctionPool {
         if (block.number <= poolInfo.lastRewardBlock) {
             return;
         }
-        uint256 dinoSupply = DINO.balanceOf(address(this));
-        if (dinoSupply == 0) {
+        if (stakedDinos == 0) {
             poolInfo.lastRewardBlock = block.number;
             return;
         }
         uint256 multiplier = getMultiplier(poolInfo.lastRewardBlock, block.number);
         uint256 tokenReward = multiplier.mul(rewardPerBlock);
-        poolInfo.accRewardPerShare = poolInfo.accRewardPerShare.add(tokenReward.mul(1e12).div(dinoSupply));
+        poolInfo.accRewardPerShare = poolInfo.accRewardPerShare.add(tokenReward.mul(1e12).div(stakedDinos));
         poolInfo.lastRewardBlock = block.number;
     }
 
     /**
-     * @dev Deposit DINO tokens to the Extinction Pool for rewards allocation and/or withdraw outstanding rewards.
+     * @dev Deposit DINO tokens to Faucet for rewards allocation and/or withdraw outstanding rewards.
      * @param _amount Amount of DINO tokens to deposit.
      */
     function transact(uint256 _amount) public {
+        require(emergencyActive == false, "Active emergency.");
         UserInfo storage user = userInfo[msg.sender];
         updatePool();
         if (user.amount > 0) {
@@ -592,12 +699,14 @@ contract ExtinctionPool {
         }
         if (block.number < lockBlock && _amount != 0) {
             DINO.safeTransferFrom(address(msg.sender), address(this), _amount);
+            stakedDinos = stakedDinos.add(_amount);
             user.amount = user.amount.add(_amount);
             user.rewardDebt = user.amount.mul(poolInfo.accRewardPerShare).div(1e12);
             emit Deposit(msg.sender, _amount);
         }
         if (block.number >= endBlock) {
             DINO.safeTransfer(burnAddress, user.amount);
+            stakedDinos = stakedDinos.sub(user.amount);
             user.amount = 0;
             user.rewardDebt = user.amount.mul(poolInfo.accRewardPerShare).div(1e12);
             emit Burn(user.amount);
@@ -606,7 +715,7 @@ contract ExtinctionPool {
     }
 
     /**
-     * @dev Safe transfer function, just in case if rounding error causes the Extinction Pool to not have enough rewards.
+     * @dev Safe transfer function, just in case if rounding error causes faucet to not have enough rewards.
      * @param _to Target address.
      * @param _amount Amount of rewards to transfer.
      */
@@ -617,5 +726,32 @@ contract ExtinctionPool {
         } else {
             REWARD.safeTransfer(_to, _amount);
         }
+    }
+
+     /**
+     * @dev Activate emergency. Transfer all REWARD tokens and activate emergency.
+     * @return Success.
+     */
+    function activateEmergency(address _to) external onlyOwner returns(bool) {
+        require(emergencyActive == false, "Emergency already active.");
+        emergencyActive = true;
+        if (DINO == REWARD) {
+            return REWARD.transfer(_to, REWARD.balanceOf(address(this)) - stakedDinos);
+        } else {
+            return REWARD.transfer(_to, REWARD.balanceOf(address(this)));
+        }
+    }
+
+    /**
+     * @dev Withdraw without caring about rewards. EMERGENCY ONLY.
+     */
+    function emergencyWithdraw() external {
+        require(emergencyActive == true, "No active emergency.");
+        UserInfo storage user = userInfo[msg.sender];
+        DINO.safeTransfer(address(msg.sender), user.amount);
+        stakedDinos = stakedDinos.sub(user.amount);
+        emit EmergencyWithdraw(msg.sender, user.amount);
+        user.amount = 0;
+        user.rewardDebt = 0;
     }
 }
